@@ -71,23 +71,36 @@ const parseJsonHistory = async (text: string): Promise<ParsedListen[]> => {
   return result;
 };
 
-const parseHtmlHistory = async (text: string): Promise<ParsedListen[]> => {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(text, "text/html");
-  const blocks = Array.from(doc.querySelectorAll("div.content-cell, div.outer-cell"));
+const stripTags = (value: string) =>
+  value
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
-  if (blocks.length === 0) {
+// Google Takeout rows are usually wrapped in `content-cell` or `outer-cell` containers.
+const takeoutHistoryBlockPattern =
+  /<div[^>]*class="[^"]*(?:content-cell|outer-cell)[^"]*"[^>]*>([\s\S]*?)<\/div>/gi;
+
+const parseHtmlHistory = async (text: string): Promise<ParsedListen[]> => {
+  const blockMatches = Array.from(text.matchAll(takeoutHistoryBlockPattern));
+
+  if (blockMatches.length === 0) {
     throw new Error("Unsupported HTML structure. Please export from Google Takeout history.");
   }
 
   const listens: ParsedListen[] = [];
 
-  for (let i = 0; i < blocks.length; i += 1) {
-    const block = blocks[i];
-    const links = block.querySelectorAll("a");
-    const titleText = links[0]?.textContent?.trim();
-    const artistText = links[1]?.textContent?.trim();
-    const timeRaw = block.textContent?.match(/\b\w+\s\d{1,2},\s\d{4}.*/)?.[0]?.trim();
+  for (let i = 0; i < blockMatches.length; i += 1) {
+    const block = blockMatches[i][1];
+    const anchorTexts = Array.from(block.matchAll(/<a[^>]*>([\s\S]*?)<\/a>/gi)).map((match) =>
+      stripTags(match[1]),
+    );
+    const titleText = anchorTexts[0];
+    const artistText = anchorTexts[1];
+    const plain = stripTags(block);
+    // Expected date tail example: "Jan 15, 2024, 3:45 PM UTC".
+    const timeRaw = plain.match(/([A-Za-z]{3,9}\s\d{1,2},\s\d{4}.*)$/)?.[1];
 
     const playedAtMs = parseDate(timeRaw);
     if (!titleText || !playedAtMs) continue;
@@ -119,7 +132,7 @@ export const detectFormat = (fileName: string, text: string): SupportedFormat | 
   if (lowerName.endsWith(".json")) return "json";
   if (lowerName.endsWith(".html") || lowerName.endsWith(".htm")) return "html";
 
-  const sample = text.slice(0, 200).trim();
+  const sample = text.slice(0, 200).trim().toLowerCase();
   if (sample.startsWith("[") || sample.startsWith("{")) return "json";
   if (sample.startsWith("<!doctype html") || sample.startsWith("<html")) return "html";
   return null;

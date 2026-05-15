@@ -38,7 +38,14 @@ export function UploadZone({ onFileSelected, loading }: Props) {
       <div
         role="button"
         tabIndex={0}
+        aria-label="Upload Google Takeout history file"
         onClick={() => fileInputRef.current?.click()}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            fileInputRef.current?.click();
+          }
+        }}
         onDragOver={(event) => {
           event.preventDefault();
           setDragging(true);

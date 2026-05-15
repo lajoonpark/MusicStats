@@ -12,10 +12,12 @@ interface Props {
 export function RecapCard({ summary, personality }: Props) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const downloadPng = async () => {
     if (!cardRef.current) return;
     setDownloading(true);
+    setDownloadError(null);
 
     try {
       const dataUrl = await toPng(cardRef.current, { cacheBust: true, pixelRatio: 2 });
@@ -23,6 +25,8 @@ export function RecapCard({ summary, personality }: Props) {
       link.download = "youtube-music-stats-recap.png";
       link.href = dataUrl;
       link.click();
+    } catch {
+      setDownloadError("Could not generate PNG. Please try again.");
     } finally {
       setDownloading(false);
     }
@@ -54,6 +58,7 @@ export function RecapCard({ summary, personality }: Props) {
       >
         {downloading ? "Generating PNG..." : "Download as PNG"}
       </button>
+      {downloadError ? <p className="mt-2 text-sm text-rose-300">{downloadError}</p> : null}
     </section>
   );
 }

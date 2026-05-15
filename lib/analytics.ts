@@ -219,8 +219,10 @@ export function buildMusicSummary(listens: ParsedListen[]): MusicSummary {
     byDay.set(day, (byDay.get(day) ?? 0) + 1);
   }
 
-  const favoriteHour =
-    sortByPlays(Array.from(byHour.entries()).map(([name, plays]) => ({ name, plays })))[0]?.name ?? 0;
+  const favoriteHour = Array.from(byHour.entries()).reduce(
+    (best, [hour, plays]) => (plays > best.plays ? { hour, plays } : best),
+    { hour: 0, plays: 0 },
+  ).hour;
 
   const artistDistribution = sortByPlays(
     Array.from(

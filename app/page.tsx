@@ -38,7 +38,7 @@ export default function Home() {
         <UploadZone onFileSelected={handleUpload} loading={loading} />
 
         {loading ? (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" role="status" aria-live="polite" aria-busy="true">
             {Array.from({ length: 8 }).map((_, index) => (
               <div key={index} className="skeleton h-28 rounded-2xl" />
             ))}

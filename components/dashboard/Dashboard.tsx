@@ -71,7 +71,7 @@ export function Dashboard({ summary }: Props) {
                   <p className="font-medium text-zinc-100">{song.song}</p>
                   <p className="text-sm text-zinc-400">{song.artist}</p>
                   <p className="mt-1 text-sm text-zinc-300">
-                    {song.plays} plays · Daily max {song.maxDailyRepeats} · Bursts {song.oneHourBursts} · Obsession {song.obsessionLevel}
+                    {song.plays} plays, daily max {song.maxDailyRepeats}, bursts {song.oneHourBursts}, obsession {song.obsessionLevel}
                   </p>
                 </li>
               ))}

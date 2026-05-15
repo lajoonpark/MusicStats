@@ -44,6 +44,6 @@ export function getMusicPersonality(summary: MusicSummary): PersonalityResult {
 
   return {
     labels,
-    summary: `You're a ${labels[0]} with ${summary.totalPlays.toLocaleString()} plays and your hottest hour is ${summary.favoriteHour}:00.`,
+    summary: `You're a ${labels[0] ?? "Listener"} with ${summary.totalPlays.toLocaleString()} plays and your hottest hour is ${summary.favoriteHour}:00.`,
   };
 }
