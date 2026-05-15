@@ -1,36 +1,107 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# YouTube Music Stats
 
-## Getting Started
+A fully client-side personal dashboard that turns your Google Takeout YouTube/YouTube Music history into a Wrapped-style recap.
 
-First, run the development server:
+## Tech Stack
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- Next.js 15 (App Router)
+- TypeScript
+- TailwindCSS
+- Recharts
+- No backend, no auth, no database
+- Optimized for Vercel deployment
+
+## Features
+
+- Drag-and-drop upload for Google Takeout history files
+  - Supports `.json` and `.html`
+- Real parser for messy YouTube titles with normalization
+- Dashboard sections:
+  - Top 10 Artists
+  - Top 10 Songs
+  - Songs On Repeat
+  - Most Active Listening Days
+  - Listening Activity by Month
+  - Total Plays / Unique Songs / Unique Artists
+  - Recently Played
+- Recharts visualizations:
+  - Top artists bar chart
+  - Top songs bar chart
+  - Monthly activity line chart
+  - Artist distribution pie chart
+- Songs-on-repeat obsession scoring
+- Music personality labels from listening patterns
+- Share recap card with in-browser PNG download
+- Dark mode glassmorphism UI, transitions, and skeleton loading states
+
+## Project Structure
+
+```text
+/components
+  /charts
+  /cards
+  /upload
+  /dashboard
+
+/lib
+  parser.ts
+  normalization.ts
+  analytics.ts
+  personality.ts
+
+/types
+  music.ts
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Getting Your Google Takeout Data
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. Open [Google Takeout](https://takeout.google.com/)
+2. Select **YouTube and YouTube Music**
+3. Include history export
+4. Download the archive
+5. Extract and locate the history file (`.json` or `.html`)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Flow reminder: **Google Takeout → YouTube and YouTube Music → history**
 
-## Learn More
+## Setup
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npm install
+npm run dev
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Supported Input Formats
 
-## Deploy on Vercel
+- Google Takeout JSON history
+- Google Takeout HTML history
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Error handling is included for:
+- Invalid files
+- Empty files
+- Corrupted JSON
+- Unsupported formats
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Build, Lint, and Run
+
+```bash
+npm run lint
+npm run build
+npm run start
+```
+
+## Vercel Deployment
+
+1. Push this repository to GitHub
+2. Import the project into Vercel
+3. Use default Next.js settings
+4. Deploy
+
+No server-side env variables are required for core functionality.
+
+## Screenshots
+
+- `[Placeholder]` Upload landing page
+- `[Placeholder]` Full analytics dashboard
+- `[Placeholder]` Recap card download view
