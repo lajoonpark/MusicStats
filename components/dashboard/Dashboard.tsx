@@ -40,8 +40,13 @@ export function Dashboard({ listens }: Props) {
 
   const activeRange = useMemo(() => {
     const { start, end } = getTimeRangeBounds(timeRange, new Date());
-    const earliestPlay = listens.reduce((min, play) => Math.min(min, play.playedAtMs), Number.POSITIVE_INFINITY);
-    const latestPlay = listens.reduce((max, play) => Math.max(max, play.playedAtMs), Number.NEGATIVE_INFINITY);
+    const { earliestPlay, latestPlay } = listens.reduce(
+      (acc, play) => ({
+        earliestPlay: Math.min(acc.earliestPlay, play.playedAtMs),
+        latestPlay: Math.max(acc.latestPlay, play.playedAtMs),
+      }),
+      { earliestPlay: Number.POSITIVE_INFINITY, latestPlay: Number.NEGATIVE_INFINITY },
+    );
 
     const rangeStart = start ?? new Date(earliestPlay);
     const rangeEnd = timeRange === "all_time" ? new Date(latestPlay) : end;
@@ -199,7 +204,7 @@ export function Dashboard({ listens }: Props) {
               </ul>
             </ChartCard>
 
-            <RecapCard summary={summary} personality={personality!} />
+            {personality ? <RecapCard summary={summary} personality={personality} /> : null}
           </section>
         </>
       )}

@@ -17,15 +17,15 @@ const monthFormatter = new Intl.DateTimeFormat("en-US", {
 });
 
 const sortByPlays = <T extends { plays: number; name?: string }>(items: T[]) =>
-  items
-    .map((item, index) => ({ item, index }))
-    .sort(
-      (a, b) =>
-        b.item.plays - a.item.plays ||
-        (a.item.name ?? "").localeCompare(b.item.name ?? "") ||
-        a.index - b.index,
-    )
-    .map(({ item }) => item);
+  [...items].sort((a, b) => {
+    const playDiff = b.plays - a.plays;
+    if (playDiff !== 0) return playDiff;
+
+    const nameDiff = (a.name ?? "").localeCompare(b.name ?? "");
+    if (nameDiff !== 0) return nameDiff;
+
+    return 0;
+  });
 
 export function getTopArtists(listens: ParsedListen[], limit = 10): RankedItem[] {
   const map = new Map<string, number>();
