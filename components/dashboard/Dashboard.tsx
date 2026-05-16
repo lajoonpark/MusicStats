@@ -25,11 +25,30 @@ interface Props {
 
 export function Dashboard({ listens }: Props) {
   const [timeRange, setTimeRange] = useState<TimeRangeKey>("all_time");
-
-  const filteredPlays = useMemo(
-    () => filterPlaysByTimeRange(listens, timeRange, new Date()),
-    [listens, timeRange],
+  const playBounds = useMemo(
+    () =>
+      listens.reduce(
+        (acc, play) => ({
+          earliestPlay: Math.min(acc.earliestPlay, play.playedAtMs),
+          latestPlay: Math.max(acc.latestPlay, play.playedAtMs),
+        }),
+        { earliestPlay: Number.POSITIVE_INFINITY, latestPlay: Number.NEGATIVE_INFINITY },
+      ),
+    [listens],
   );
+
+  const { filteredPlays, activeRange } = useMemo(() => {
+    const referenceNow = new Date();
+    const filtered = filterPlaysByTimeRange(listens, timeRange, referenceNow);
+    const { start, end } = getTimeRangeBounds(timeRange, referenceNow);
+
+    const rangeStart = start ?? new Date(playBounds.earliestPlay);
+    const rangeEnd = timeRange === "all_time" ? new Date(playBounds.latestPlay) : end;
+    return {
+      filteredPlays: filtered,
+      activeRange: `Showing ${formatDateRange(rangeStart, rangeEnd)}`,
+    };
+  }, [listens, playBounds.earliestPlay, playBounds.latestPlay, timeRange]);
 
   const summary = useMemo(
     () => (filteredPlays.length > 0 ? buildMusicSummary(filteredPlays) : null),
@@ -38,21 +57,6 @@ export function Dashboard({ listens }: Props) {
 
   const personality = summary ? getMusicPersonality(summary) : null;
 
-  const activeRange = useMemo(() => {
-    const { start, end } = getTimeRangeBounds(timeRange, new Date());
-    const { earliestPlay, latestPlay } = listens.reduce(
-      (acc, play) => ({
-        earliestPlay: Math.min(acc.earliestPlay, play.playedAtMs),
-        latestPlay: Math.max(acc.latestPlay, play.playedAtMs),
-      }),
-      { earliestPlay: Number.POSITIVE_INFINITY, latestPlay: Number.NEGATIVE_INFINITY },
-    );
-
-    const rangeStart = start ?? new Date(earliestPlay);
-    const rangeEnd = timeRange === "all_time" ? new Date(latestPlay) : end;
-    return `Showing ${formatDateRange(rangeStart, rangeEnd)}`;
-  }, [listens, timeRange]);
-
   const handleTimeRangeChange = (value: string) => {
     if (TIME_RANGE_OPTIONS.some((option) => option.key === value)) {
       setTimeRange(value as TimeRangeKey);
@@ -60,7 +64,7 @@ export function Dashboard({ listens }: Props) {
   };
 
   return (
-    <div className="fade-in space-y-6 pb-[calc(6rem+env(safe-area-inset-bottom))]">
+    <div className="fade-in space-y-6 pb-[calc(7rem+env(safe-area-inset-bottom))]">
       <header className="glass-card space-y-4 p-4 sm:p-6">
         <div>
           <h2 className="text-xl font-semibold text-zinc-100 sm:text-2xl">Your Listening Dashboard</h2>

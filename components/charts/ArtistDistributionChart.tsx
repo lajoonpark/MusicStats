@@ -14,6 +14,7 @@ interface Props {
 export function ArtistDistributionChart({ data }: Props) {
   const isSmallScreen = useMediaQuery("(max-width: 420px)");
   const isMobile = useMediaQuery("(max-width: 640px)");
+  const maxLabelLength = isSmallScreen ? 12 : isMobile ? 14 : 18;
 
   return (
     <div className="h-72 min-h-[280px] w-full sm:h-80">
@@ -26,7 +27,7 @@ export function ArtistDistributionChart({ data }: Props) {
             cx="50%"
             cy="50%"
             outerRadius={isSmallScreen ? 86 : isMobile ? 98 : 112}
-            label={!isMobile ? ({ name }) => truncateLabel(String(name), 18) : false}
+            label={!isMobile ? ({ name }) => truncateLabel(String(name), maxLabelLength) : false}
             labelLine={!isMobile}
           >
             {data.map((entry, index) => (

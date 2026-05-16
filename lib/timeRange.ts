@@ -32,7 +32,6 @@ export const TIME_RANGE_OPTIONS: TimeRangeOption[] = [
   { key: "this_week", label: "This week" },
   { key: "last_week", label: "Last week" },
 ];
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 const startOfDay = (date: Date): Date => {
   const next = new Date(date);
@@ -97,7 +96,7 @@ export function getTimeRangeBounds(range: TimeRangeKey, now = new Date()): TimeR
       const thisWeekStart = startOfWeekMonday(current);
       const start = new Date(thisWeekStart);
       start.setDate(start.getDate() - 7);
-      const end = endOfDay(new Date(thisWeekStart.getTime() - MS_PER_DAY));
+      const end = endOfDay(new Date(thisWeekStart.getTime() - 24 * 60 * 60 * 1000));
       return { start: startOfDay(start), end };
     }
     default:
