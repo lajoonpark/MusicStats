@@ -1,5 +1,6 @@
 import { ParsedListen, SupportedFormat } from "@/types/music";
 import { splitSongAndArtist } from "@/lib/normalization";
+import DOMPurify from "dompurify";
 
 interface TakeoutJsonItem {
   title?: string;
@@ -74,6 +75,15 @@ const timezoneOffsets: Record<string, string> = {
   AWST: "+0800",
 };
 
+const parseHtmlDocument = (value: string) =>
+  new DOMParser().parseFromString(
+    DOMPurify.sanitize(value, {
+      USE_PROFILES: { html: true },
+      WHOLE_DOCUMENT: true,
+    }),
+    "text/html",
+  );
+
 const normalizeText = (value?: string) =>
   (value ?? "")
     .replace(/&nbsp;/gi, " ")
@@ -132,10 +142,13 @@ const parseDate = (raw?: string): number | null => {
   const utcOffsetMatch = normalized.match(/\b(UTC|GMT)([+-]\d{1,2})(?::?(\d{2}))?$/i);
   if (utcOffsetMatch) {
     const [, , hours, minutes = "00"] = utcOffsetMatch;
-    const paddedHours = hours.startsWith("-")
-      ? `-${hours.slice(1).padStart(2, "0")}`
-      : `+${hours.slice(1).padStart(2, "0")}`;
-    const replaced = normalized.replace(/\b(UTC|GMT)([+-]\d{1,2})(?::?(\d{2}))?$/i, `${paddedHours}${minutes}`);
+    const sign = hours.startsWith("-") ? "-" : "+";
+    const paddedHours = hours.replace(/^[+-]/, "").padStart(2, "0");
+    const paddedMinutes = minutes.padStart(2, "0");
+    const replaced = normalized.replace(
+      /\b(UTC|GMT)([+-]\d{1,2})(?::?(\d{2}))?$/i,
+      `${sign}${paddedHours}${paddedMinutes}`,
+    );
     const parsed = Date.parse(replaced);
     if (!Number.isNaN(parsed)) return parsed;
   }
@@ -382,7 +395,7 @@ const parseHtmlHistory = async (text: string): Promise<ParsedListen[]> => {
   let doc: Document | null = null;
 
   try {
-    doc = new DOMParser().parseFromString(text, "text/html");
+    doc = parseHtmlDocument(text);
   } catch {
     doc = null;
   }
