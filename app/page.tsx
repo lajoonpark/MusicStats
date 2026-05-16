@@ -1,9 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Dashboard } from "@/components/dashboard/Dashboard";
 import { UploadZone } from "@/components/upload/UploadZone";
-import { buildMusicSummary } from "@/lib/analytics";
 import { parseTakeoutFile } from "@/lib/parser";
 import { ParsedListen } from "@/types/music";
 
@@ -11,11 +10,6 @@ export default function Home() {
   const [listens, setListens] = useState<ParsedListen[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-
-  const summary = useMemo(() => {
-    if (listens.length === 0) return null;
-    return buildMusicSummary(listens);
-  }, [listens]);
 
   const handleUpload = async (file: File) => {
     setLoading(true);
@@ -33,7 +27,7 @@ export default function Home() {
   };
 
   return (
-    <main className="min-h-screen bg-gradient-to-b from-zinc-950 via-zinc-950 to-zinc-900 px-4 py-8 text-zinc-100 sm:px-8">
+    <main className="min-h-screen bg-gradient-to-b from-zinc-950 via-zinc-950 to-zinc-900 px-4 py-8 pb-[calc(7rem+env(safe-area-inset-bottom))] text-zinc-100 sm:px-8">
       <div className="mx-auto w-full max-w-7xl space-y-6">
         <UploadZone onFileSelected={handleUpload} loading={loading} />
 
@@ -49,7 +43,7 @@ export default function Home() {
           <div className="rounded-2xl border border-rose-500/40 bg-rose-500/10 p-4 text-rose-200">{error}</div>
         ) : null}
 
-        {!loading && !summary && !error ? (
+        {!loading && listens.length === 0 && !error ? (
           <section className="glass-card p-8 text-center">
             <h2 className="text-2xl font-semibold">Ready for your Wrapped-style recap?</h2>
             <p className="mt-2 text-zinc-300">
@@ -58,7 +52,7 @@ export default function Home() {
           </section>
         ) : null}
 
-        {summary ? <Dashboard summary={summary} /> : null}
+        {listens.length > 0 ? <Dashboard listens={listens} /> : null}
       </div>
     </main>
   );
