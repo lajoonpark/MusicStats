@@ -199,7 +199,7 @@ export function Dashboard({ listens }: Props) {
               </ul>
             </ChartCard>
 
-            <RecapCard summary={summary} personality={personality} />
+            <RecapCard summary={summary} personality={personality!} />
           </section>
         </>
       )}
