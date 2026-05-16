@@ -11,14 +11,20 @@ const junkPatterns = [
 
 const separators = [" - ", " – ", " — ", " by "];
 
-const collapseSpace = (value: string) => value.replace(/\s+/g, " ").trim();
+const collapseSpace = (value: string) =>
+  value
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\u00a0/g, " ")
+    .replace(/\u00c2(?=\s|$)/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 
 export function normalizeTitle(raw: string): string {
   if (!raw) return "Unknown Song";
 
   let title = raw
-    .replace(/^watched\s+/i, "")
-    .replace(/^listened\s+to\s+/i, "")
+    .replace(/^watched[\s\u00a0\u00c2]*/i, "")
+    .replace(/^listened[\s\u00a0\u00c2]*to[\s\u00a0\u00c2]*/i, "")
     .replace(/^music\s+/i, "");
 
   for (const pattern of junkPatterns) {
@@ -41,6 +47,7 @@ export function normalizeArtist(raw?: string): string {
     raw
       .replace(/^by\s+/i, "")
       .replace(/^artist\s*[:\-]\s*/i, "")
+      .replace(/\s*[-–—]\s*topic$/i, "")
       .replace(/\s*\(topic\)$/i, ""),
   );
 }
