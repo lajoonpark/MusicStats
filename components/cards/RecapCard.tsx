@@ -33,20 +33,20 @@ export function RecapCard({ summary, personality }: Props) {
   };
 
   return (
-    <section className="glass-card p-6">
-      <h3 className="mb-4 text-xl font-semibold">Share Card</h3>
+    <section className="glass-card min-h-[22rem] p-4 sm:p-6">
+      <h3 className="mb-4 text-lg font-semibold sm:text-xl">Share Card</h3>
       <div
         ref={cardRef}
-        className="rounded-2xl border border-zinc-700/60 bg-gradient-to-br from-[#0f172a] via-[#1d4ed8]/20 to-[#059669]/20 p-6"
+        className="rounded-2xl border border-zinc-700/60 bg-gradient-to-br from-[#0f172a] via-[#1d4ed8]/20 to-[#059669]/20 p-5 sm:p-6"
       >
         <p className="text-xs uppercase tracking-[0.2em] text-zinc-300">YouTube Music Stats</p>
-        <h4 className="mt-3 text-2xl font-bold">Your Personal Recap</h4>
+        <h4 className="mt-3 text-xl font-bold sm:text-2xl">Your Personal Recap</h4>
         <div className="mt-5 space-y-2 text-zinc-100">
-          <p>Top Artist: {summary.topArtist?.name ?? "-"}</p>
-          <p>Top Song: {summary.topSong?.name ?? "-"}</p>
+          <p className="overflow-hidden text-ellipsis whitespace-nowrap">Top Artist: {summary.topArtist?.name ?? "-"}</p>
+          <p className="overflow-hidden text-ellipsis whitespace-nowrap">Top Song: {summary.topSong?.name ?? "-"}</p>
           <p>Total Plays: {summary.totalPlays.toLocaleString()}</p>
           <p>Favorite Hour: {summary.favoriteHour}:00</p>
-          <p>Music Personality: {personality.labels[0]}</p>
+          <p className="overflow-hidden text-ellipsis whitespace-nowrap">Music Personality: {personality.labels[0]}</p>
         </div>
       </div>
 

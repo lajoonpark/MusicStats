@@ -16,8 +16,16 @@ const monthFormatter = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
 });
 
-const sortByPlays = <T extends { plays: number }>(items: T[]) =>
-  items.sort((a, b) => b.plays - a.plays);
+const sortByPlays = <T extends { plays: number; name?: string }>(items: T[]) =>
+  items
+    .map((item, index) => ({ item, index }))
+    .sort(
+      (a, b) =>
+        b.item.plays - a.item.plays ||
+        (a.item.name ?? "").localeCompare(b.item.name ?? "") ||
+        a.index - b.index,
+    )
+    .map(({ item }) => item);
 
 export function getTopArtists(listens: ParsedListen[], limit = 10): RankedItem[] {
   const map = new Map<string, number>();
@@ -118,7 +126,15 @@ export function getRepeatSongs(listens: ParsedListen[], limit = 10): RepeatSong[
     });
   }
 
-  return repeats.sort((a, b) => b.obsessionLevel - a.obsessionLevel).slice(0, limit);
+  return repeats
+    .sort(
+      (a, b) =>
+        b.obsessionLevel - a.obsessionLevel ||
+        b.plays - a.plays ||
+        a.song.localeCompare(b.song) ||
+        a.artist.localeCompare(b.artist),
+    )
+    .slice(0, limit);
 }
 
 export function getListeningHeatmap(listens: ParsedListen[]): HeatmapPoint[] {
