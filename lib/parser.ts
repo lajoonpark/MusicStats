@@ -47,6 +47,7 @@ const ignoredLinkLabels = new Set([
   "why is this here?",
   "here",
 ]);
+const YOUTUBE_MUSIC_PATTERN = /\byoutube music\b/i;
 const timezoneOffsets: Record<string, string> = {
   UTC: "+0000",
   GMT: "+0000",
@@ -189,7 +190,7 @@ const parseDate = (raw?: string): number | null => {
 };
 
 const isMusicEvent = (item: TakeoutJsonItem) =>
-  /\byoutube music\b/i.test(item.header ?? "");
+  YOUTUBE_MUSIC_PATTERN.test(item.header ?? "");
 
 const parseJsonHistory = async (text: string): Promise<ParsedListen[]> => {
   let parsed: unknown;
@@ -291,7 +292,7 @@ const getCandidateBlocks = (doc: Document): { blocks: HtmlCandidateBlock[]; tota
         .map((link) => normalizeText(link.textContent ?? ""))
         .filter(isMeaningfulHistoryLink);
       const timeRaw = findTimestampCandidate(text);
-      const isYouTubeMusicBlock = /\byoutube music\b/i.test(text);
+      const isYouTubeMusicBlock = YOUTUBE_MUSIC_PATTERN.test(text);
 
       return {
         element,
@@ -414,12 +415,12 @@ const parseHtmlHistoryWithFallback = async (
       .find(
         (line) =>
           !findTimestampCandidate(line) &&
-          !/\byoutube music\b/i.test(line) &&
+          !YOUTUBE_MUSIC_PATTERN.test(line) &&
           !/^products?:?/i.test(line) &&
           !/^why is this here\??$/i.test(line),
       );
 
-    const qualifies = lines.some((line) => /\byoutube music\b/i.test(line));
+    const qualifies = lines.some((line) => YOUTUBE_MUSIC_PATTERN.test(line));
     if (!qualifies) {
       console.debug("[takeout-html-parser:text-fallback] skipped:", { reason: "not youtube music", preview: previewText(block) });
       continue;
