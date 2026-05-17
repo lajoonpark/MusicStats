@@ -18,15 +18,10 @@ interface HtmlCandidateBlock {
   isYouTubeMusicBlock: boolean;
 }
 
-interface HtmlPageContext {
-  fileLooksLikeTakeout: boolean;
-  pageIndicatesMusicHistory: boolean;
-}
-
 const htmlParseError =
   "We found a Takeout HTML file, but couldn’t parse it. Please make sure this is the YouTube and YouTube Music watch-history.html file.";
-const htmlMusicExtractionError =
-  "We found your Takeout history, but couldn’t confidently detect music plays. This file may contain mixed YouTube history or text encoding issues.";
+const noMusicHistoryError =
+  "No YouTube Music history was found. Make sure your Google Takeout export includes YouTube and YouTube Music → history, and that the file contains YouTube Music activity.";
 
 const monthPattern =
   "(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)";
@@ -52,6 +47,7 @@ const ignoredLinkLabels = new Set([
   "why is this here?",
   "here",
 ]);
+const YOUTUBE_MUSIC_PATTERN = /\byoutube music\b/i;
 const timezoneOffsets: Record<string, string> = {
   UTC: "+0000",
   GMT: "+0000",
@@ -193,10 +189,8 @@ const parseDate = (raw?: string): number | null => {
   return null;
 };
 
-const isMusicEvent = (item: TakeoutJsonItem) => {
-  const source = `${item.header ?? ""} ${item.title ?? ""}`.toLowerCase();
-  return source.includes("youtube") || source.includes("music");
-};
+const isMusicEvent = (item: TakeoutJsonItem) =>
+  YOUTUBE_MUSIC_PATTERN.test(item.header ?? "");
 
 const parseJsonHistory = async (text: string): Promise<ParsedListen[]> => {
   let parsed: unknown;
@@ -218,10 +212,19 @@ const parseJsonHistory = async (text: string): Promise<ParsedListen[]> => {
 
   const result: ParsedListen[] = [];
   const chunkSize = 2000;
+  let youtubeMusicCards = 0;
+  let skippedGeneralYouTubeCards = 0;
 
   for (let i = 0; i < records.length; i += 1) {
     const item = records[i] as TakeoutJsonItem;
-    if (!isMusicEvent(item) || !item.title) continue;
+    if (!item.title) continue;
+
+    if (!isMusicEvent(item)) {
+      skippedGeneralYouTubeCards += 1;
+      continue;
+    }
+
+    youtubeMusicCards += 1;
 
     const playedAtMs = parseDate(item.time);
     if (!playedAtMs) continue;
@@ -242,23 +245,18 @@ const parseJsonHistory = async (text: string): Promise<ParsedListen[]> => {
     }
   }
 
+  console.debug("[takeout-json-parser]", {
+    totalCards: records.length,
+    youtubeMusicCards,
+    parsedYouTubeMusicPlays: result.length,
+    skippedGeneralYouTubeCards,
+  });
+
   if (result.length === 0) {
-    throw new Error("No playable YouTube Music history was found in this JSON file.");
+    throw new Error(noMusicHistoryError);
   }
 
   return result;
-};
-
-const getPageContext = (doc: Document): HtmlPageContext => {
-  const pageText = normalizeText(doc.body?.textContent ?? "");
-  const hasYoutube = /\byoutube\b/i.test(pageText);
-  const hasYoutubeMusic = /\byoutube music\b/i.test(pageText);
-  const hasHistory = /\b(?:watch[-\s]?history|history|my activity)\b/i.test(pageText);
-
-  return {
-    fileLooksLikeTakeout: hasYoutube && hasHistory,
-    pageIndicatesMusicHistory: hasYoutube && hasYoutubeMusic && hasHistory,
-  };
 };
 
 const isMeaningfulHistoryLink = (value: string) => {
@@ -286,19 +284,15 @@ const buildListen = (titleText: string, artistText: string | undefined, timeRaw:
   };
 };
 
-const getCandidateBlocks = (doc: Document) => {
-  const rawCandidates = Array.from(doc.body?.querySelectorAll("div, section, article, li, tr") ?? [])
+const getCandidateBlocks = (doc: Document): { blocks: HtmlCandidateBlock[]; totalCards: number; skippedGeneralCards: number } => {
+  const allActivityCards = Array.from(doc.body?.querySelectorAll("div, section, article, li, tr") ?? [])
     .map((element) => {
       const text = normalizeText(element.textContent ?? "");
       const links = Array.from(element.querySelectorAll("a"))
         .map((link) => normalizeText(link.textContent ?? ""))
         .filter(isMeaningfulHistoryLink);
       const timeRaw = findTimestampCandidate(text);
-      const hasPlaybackMarker = /\b(?:watched|listened(?:\s+to)?)\b/i.test(text);
-      const isYouTubeMusicBlock = /\byoutube music\b/i.test(text);
-      const hasMusicHashtag = /#[A-Za-z][A-Za-z0-9_]+/.test(text);
-      const looksLikeCard =
-        hasPlaybackMarker || isYouTubeMusicBlock || /-\s*topic\b/i.test(links.join(" ")) || hasMusicHashtag;
+      const isYouTubeMusicBlock = YOUTUBE_MUSIC_PATTERN.test(text);
 
       return {
         element,
@@ -306,45 +300,38 @@ const getCandidateBlocks = (doc: Document) => {
         links,
         timeRaw,
         isYouTubeMusicBlock,
-        looksLikeCard,
       };
     })
     .filter(
       (candidate) =>
-        candidate.looksLikeCard &&
         candidate.links.length >= 2 &&
         Boolean(candidate.timeRaw) &&
         candidate.text.length >= 20 &&
         candidate.text.length <= 3000,
-    )
+    );
+
+  const totalCards = allActivityCards.length;
+  const musicCards = allActivityCards
+    .filter((candidate) => candidate.isYouTubeMusicBlock)
     .sort((left, right) => left.text.length - right.text.length);
+  const skippedGeneralCards = totalCards - musicCards.length;
 
-  const deduped: HtmlCandidateBlock[] = [];
-
-  for (const candidate of rawCandidates) {
-    if (deduped.some((accepted) => candidate.element.contains(accepted.element))) continue;
-    deduped.push(candidate);
+  const blocks: HtmlCandidateBlock[] = [];
+  for (const candidate of musicCards) {
+    if (blocks.some((accepted) => candidate.element.contains(accepted.element))) continue;
+    blocks.push(candidate);
   }
 
-  return deduped;
+  return { blocks, totalCards, skippedGeneralCards };
 };
 
-// Returns true if a candidate block is likely a music history entry.
-// In strict mode: requires YouTube Music card, "- Topic" artist, or music hashtag.
-// In broad mode: also includes any entry with title + artist + timestamp (last-resort fallback).
-const isMusicCandidate = (candidate: HtmlCandidateBlock, strict: boolean): boolean => {
-  if (candidate.isYouTubeMusicBlock) return true;
-  const artistText = candidate.links[1] ?? "";
-  if (/-\s*topic\b/i.test(artistText)) return true;
-  if (/#[A-Za-z][A-Za-z0-9_]+/.test(candidate.text)) return true;
-  if (!strict && candidate.links.length >= 2 && Boolean(candidate.timeRaw)) return true;
-  return false;
-};
+// Returns true if a candidate block is a YouTube Music history entry.
+// Only entries whose activity card explicitly contains "YouTube Music" are included.
+const isMusicCandidate = (candidate: HtmlCandidateBlock): boolean =>
+  candidate.isYouTubeMusicBlock;
 
 const iterateCandidateBlocks = async (
   candidateBlocks: HtmlCandidateBlock[],
-  pageIndicatesMusicHistory: boolean,
-  strict: boolean,
 ): Promise<{ listens: ParsedListen[]; skippedPreviews: string[] }> => {
   const listens: ParsedListen[] = [];
   const skippedPreviews: string[] = [];
@@ -354,9 +341,8 @@ const iterateCandidateBlocks = async (
     const candidate = candidateBlocks[index];
     const titleText = candidate.links[0];
     const artistText = candidate.links[1];
-    const qualifies = pageIndicatesMusicHistory || isMusicCandidate(candidate, strict);
 
-    if (!titleText || !candidate.timeRaw || !qualifies) {
+    if (!titleText || !candidate.timeRaw || !isMusicCandidate(candidate)) {
       if (skippedPreviews.length < 5) {
         skippedPreviews.push(previewText(candidate.text));
       }
@@ -387,27 +373,19 @@ const iterateCandidateBlocks = async (
 const parseHtmlHistoryWithDom = async (
   doc: Document,
 ): Promise<{
-  candidateBlocks: HtmlCandidateBlock[];
+  blocks: HtmlCandidateBlock[];
+  totalCards: number;
+  skippedGeneralCards: number;
   listens: ParsedListen[];
   skippedPreviews: string[];
-  usedBroadFallback: boolean;
 }> => {
-  const { pageIndicatesMusicHistory } = getPageContext(doc);
-  const candidateBlocks = getCandidateBlocks(doc);
-
-  const strictResult = await iterateCandidateBlocks(candidateBlocks, pageIndicatesMusicHistory, true);
-  if (strictResult.listens.length > 0) {
-    return { candidateBlocks, ...strictResult, usedBroadFallback: false };
-  }
-
-  // No results with strict music detection — retry with broader heuristics
-  const broadResult = await iterateCandidateBlocks(candidateBlocks, pageIndicatesMusicHistory, false);
-  return { candidateBlocks, ...broadResult, usedBroadFallback: true };
+  const { blocks, totalCards, skippedGeneralCards } = getCandidateBlocks(doc);
+  const result = await iterateCandidateBlocks(blocks);
+  return { blocks, totalCards, skippedGeneralCards, ...result };
 };
 
 const parseHtmlHistoryWithFallback = async (
   text: string,
-  pageContext: HtmlPageContext,
 ): Promise<ParsedListen[]> => {
   const blockText = stripTagsWithBreaks(text);
   const blocks = blockText
@@ -437,19 +415,14 @@ const parseHtmlHistoryWithFallback = async (
       .find(
         (line) =>
           !findTimestampCandidate(line) &&
-          !/\byoutube music\b/i.test(line) &&
+          !YOUTUBE_MUSIC_PATTERN.test(line) &&
           !/^products?:?/i.test(line) &&
           !/^why is this here\??$/i.test(line),
       );
 
-    const qualifies =
-      lines.some((line) => /\byoutube music\b/i.test(line)) ||
-      /-\s*topic\b/i.test(artistLine ?? "") ||
-      /#[A-Za-z][A-Za-z0-9_]+/.test(block) ||
-      pageContext.pageIndicatesMusicHistory ||
-      Boolean(artistLine); // broad: Watched + title + artist + timestamp is likely music
+    const qualifies = lines.some((line) => YOUTUBE_MUSIC_PATTERN.test(line));
     if (!qualifies) {
-      console.debug("[takeout-html-parser:text-fallback] skipped:", { reason: "not music", preview: previewText(block) });
+      console.debug("[takeout-html-parser:text-fallback] skipped:", { reason: "not youtube music", preview: previewText(block) });
       continue;
     }
 
@@ -478,34 +451,26 @@ const parseHtmlHistory = async (text: string): Promise<ParsedListen[]> => {
     doc = null;
   }
 
-  const pageContext = doc ? getPageContext(doc) : { fileLooksLikeTakeout: false, pageIndicatesMusicHistory: false };
-
   if (!doc) {
     throw new Error(htmlParseError);
   }
 
-  const { candidateBlocks, listens: domListens, skippedPreviews, usedBroadFallback } =
+  const { blocks, totalCards, skippedGeneralCards, listens: domListens, skippedPreviews } =
     await parseHtmlHistoryWithDom(doc);
-  const fallbackListens = domListens.length === 0 ? await parseHtmlHistoryWithFallback(text, pageContext) : [];
+  const fallbackListens = domListens.length === 0 ? await parseHtmlHistoryWithFallback(text) : [];
   const parsedListens = domListens.length > 0 ? domListens : fallbackListens;
 
-  const youtubeMusicCards = candidateBlocks.filter((candidate) => candidate.isYouTubeMusicBlock).length;
-  const cardsWithTimestamps = candidateBlocks.filter((candidate) => candidate.timeRaw).length;
-  const likelyMusicCards = candidateBlocks.filter((candidate) => isMusicCandidate(candidate, false)).length;
-
   console.debug("[takeout-html-parser]", {
-    totalCards: candidateBlocks.length,
-    cardsWithTimestamps,
-    youtubeMusicCards,
-    likelyMusicCards,
-    parsedPlays: parsedListens.length,
-    usedBroadFallback,
+    totalCards,
+    youtubeMusicCards: blocks.length,
+    parsedYouTubeMusicPlays: parsedListens.length,
+    skippedGeneralYouTubeCards: skippedGeneralCards,
     usedTextFallback: domListens.length === 0 && fallbackListens.length > 0,
     skippedExamples: skippedPreviews.slice(0, 5),
   });
 
   if (parsedListens.length === 0) {
-    throw new Error(htmlMusicExtractionError);
+    throw new Error(noMusicHistoryError);
   }
 
   return parsedListens;
