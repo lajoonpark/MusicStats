@@ -48,7 +48,10 @@ export function normalizeArtist(raw?: string): string {
       .replace(/^by\s+/i, "")
       .replace(/^artist\s*[:\-]\s*/i, "")
       .replace(/\s*[-–—]\s*topic$/i, "")
-      .replace(/\s*\(topic\)$/i, ""),
+      .replace(/\s*\(topic\)$/i, "")
+      // Remove trailing "Official" suffix (e.g. "DAY6Official" → "DAY6", "BTS Official" → "BTS").
+      // The \s* before Official ensures both "BTS Official" and "DAY6Official" are handled.
+      .replace(/\s*Official$/i, ""),
   );
 }
 
