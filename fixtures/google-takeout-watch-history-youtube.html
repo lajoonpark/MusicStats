@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>YouTube and YouTube Music watch-history</title>
+  </head>
+  <body>
+    <main>
+      <h1>YouTube and YouTube Music</h1>
+      <h2>watch-history.html</h2>
+      <!--
+        Fixture: Google Takeout export from a user with a non-"YouTube Music" header.
+        Covers:
+          - Card header is "YouTube" (not "YouTube Music")
+          - "WatchedÂ" mojibake prefix before the title link
+          - Broken mojibake title text (Korean bytes mis-decoded)
+          - Clean channel/artist name ("WOODZ")
+          - Day-first date format: "16 May 2026, 22:30:08 NZST"
+          - Music hashtags in the title for fallback music detection
+      -->
+      <section class="outer-cell">
+        <div class="content-cell">
+          <a href="https://www.youtube.com/">YouTube</a>
+          <div>
+            WatchedÂ <a href="https://www.youtube.com/watch?v=woodz123">ê³¡ #WOODZ #Archive_1</a>
+          </div>
+          <div>
+            <a href="https://www.youtube.com/channel/UCwoodz">WOODZ</a>
+          </div>
+          <div>16 May 2026, 22:30:08 NZST</div>
+          <div>Products:</div>
+          <div>YouTube</div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

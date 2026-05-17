@@ -23,13 +23,20 @@ interface HtmlPageContext {
   pageIndicatesMusicHistory: boolean;
 }
 
+const htmlParseError =
+  "We found a Takeout HTML file, but couldn’t parse it. Please make sure this is the YouTube and YouTube Music watch-history.html file.";
 const htmlMusicExtractionError =
-  "We found a Takeout HTML file, but couldn’t extract music plays. Please make sure this is the YouTube and YouTube Music watch-history.html file.";
+  "We found your Takeout history, but couldn’t confidently detect music plays. This file may contain mixed YouTube history or text encoding issues.";
 
 const monthPattern =
   "(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)";
 const takeoutDatePattern = new RegExp(
   `\\b${monthPattern}\\s+\\d{1,2},\\s+\\d{4},\\s+\\d{1,2}:\\d{2}(?::\\d{2})?\\s*(?:AM|PM)?(?:\\s+(?:UTC|GMT)?[+-]\\d{2}:?\\d{2}|\\s+(?:UTC|GMT|[A-Z]{2,5})|Z)?\\b`,
+  "gi",
+);
+// Matches day-first dates: "16 May 2026, 22:30:08 NZST" or "16 May 2026, 22:30 NZST"
+const takeoutDatePatternDMY = new RegExp(
+  `\\b\\d{1,2}\\s+${monthPattern}\\s+\\d{4},\\s+\\d{1,2}:\\d{2}(?::\\d{2})?\\s*(?:AM|PM)?(?:\\s+(?:UTC|GMT)?[+-]\\d{2}:?\\d{2}|\\s+(?:UTC|GMT|[A-Z]{2,5})|Z)?\\b`,
   "gi",
 );
 const isoDatePattern = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:?\d{2})\b/gi;
@@ -43,6 +50,7 @@ const ignoredLinkLabels = new Set([
   "details",
   "learn more",
   "why is this here?",
+  "here",
 ]);
 const timezoneOffsets: Record<string, string> = {
   UTC: "+0000",
@@ -90,6 +98,8 @@ const normalizeText = (value?: string) =>
     .replace(/&#160;|&#xa0;/gi, " ")
     .replace(/\u00a0/g, " ")
     .replace(/\u00c2(?=\s|$)/g, "")
+    .replace(/\ufffd+/g, "")
+    .replace(/[\u0080-\u009f]/g, "")
     .replace(/\s+/g, " ")
     .trim();
 
@@ -99,6 +109,8 @@ const normalizeMultilineText = (value: string) =>
     .replace(/&#160;|&#xa0;/gi, " ")
     .replace(/\u00a0/g, " ")
     .replace(/\u00c2(?=\s|$)/g, "")
+    .replace(/\ufffd+/g, "")
+    .replace(/[\u0080-\u009f]/g, "")
     .replace(/[ \t\f\v]+/g, " ")
     .replace(/\r/g, "")
     .replace(/\n[ \t]+/g, "\n")
@@ -115,17 +127,42 @@ const stripTagsWithBreaks = (value: string) =>
 
 const previewText = (value: string) => normalizeText(value).slice(0, 160);
 
+// Normalizes common mojibake artifacts from mis-encoded Google Takeout exports.
+// Handles cases where "Watched" is followed by a stray Â (U+00C2) from latin-1/UTF-8 mismatch.
+// Apply this to decoded text content (not raw HTML) to clean encoding artifacts.
+export const normalizeMojibakeText = (text: string): string =>
+  text
+    .replace(/Watched\u00c2\s*/gi, "Watched ")
+    .replace(/\u00c2\u00a0/g, " ")
+    .replace(/\u00c2(?=\s|$)/g, "")
+    .replace(/\ufffd+/g, "")
+    .replace(/[\u0080-\u009f]/g, "")
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+// Converts day-first date strings to month-first for reliable Date.parse compatibility.
+// "16 May 2026, 22:30:08 NZST" → "May 16, 2026, 22:30:08 NZST"
+const normalizeDateToMDY = (value: string): string =>
+  value.replace(
+    new RegExp(`^(\\d{1,2})\\s+(${monthPattern})\\s+(\\d{4}),`, "i"),
+    "$2 $1, $3,",
+  );
+
 const findTimestampCandidate = (value: string): string | null => {
   const normalized = normalizeText(value);
   const exactDate = normalized.match(takeoutDatePattern)?.[0];
   if (exactDate) return exactDate;
+  const dmyDate = normalized.match(takeoutDatePatternDMY)?.[0];
+  if (dmyDate) return dmyDate;
   return normalized.match(isoDatePattern)?.[0] ?? null;
 };
 
 const parseDate = (raw?: string): number | null => {
   if (!raw) return null;
 
-  const normalized = normalizeText(raw);
+  // Normalize day-first formats ("16 May 2026, ...") to month-first for Date.parse
+  const normalized = normalizeDateToMDY(normalizeText(raw));
   const direct = Date.parse(normalized);
   if (!Number.isNaN(direct)) return direct;
 
@@ -236,7 +273,9 @@ const buildListen = (titleText: string, artistText: string | undefined, timeRaw:
   if (!playedAtMs) return null;
 
   const { song, artist } = splitSongAndArtist(titleText, artistText);
-  if (!song || song === "Unknown Song") return null;
+  // Allow play if artist is known, even when the title is mojibake or missing
+  const hasKnownArtist = artist !== "Unknown Artist";
+  if (!song || (song === "Unknown Song" && !hasKnownArtist)) return null;
 
   return {
     song,
@@ -257,7 +296,9 @@ const getCandidateBlocks = (doc: Document) => {
       const timeRaw = findTimestampCandidate(text);
       const hasPlaybackMarker = /\b(?:watched|listened(?:\s+to)?)\b/i.test(text);
       const isYouTubeMusicBlock = /\byoutube music\b/i.test(text);
-      const looksLikeCard = hasPlaybackMarker || isYouTubeMusicBlock || /-\s*topic\b/i.test(links.join(" "));
+      const hasMusicHashtag = /#[A-Za-z][A-Za-z0-9_]+/.test(text);
+      const looksLikeCard =
+        hasPlaybackMarker || isYouTubeMusicBlock || /-\s*topic\b/i.test(links.join(" ")) || hasMusicHashtag;
 
       return {
         element,
@@ -288,15 +329,23 @@ const getCandidateBlocks = (doc: Document) => {
   return deduped;
 };
 
-const parseHtmlHistoryWithDom = async (
-  doc: Document,
-): Promise<{
-  candidateBlocks: HtmlCandidateBlock[];
-  listens: ParsedListen[];
-  skippedPreviews: string[];
-}> => {
-  const { pageIndicatesMusicHistory } = getPageContext(doc);
-  const candidateBlocks = getCandidateBlocks(doc);
+// Returns true if a candidate block is likely a music history entry.
+// In strict mode: requires YouTube Music card, "- Topic" artist, or music hashtag.
+// In broad mode: also includes any entry with title + artist + timestamp (last-resort fallback).
+const isMusicCandidate = (candidate: HtmlCandidateBlock, strict: boolean): boolean => {
+  if (candidate.isYouTubeMusicBlock) return true;
+  const artistText = candidate.links[1] ?? "";
+  if (/-\s*topic\b/i.test(artistText)) return true;
+  if (/#[A-Za-z][A-Za-z0-9_]+/.test(candidate.text)) return true;
+  if (!strict && candidate.links.length >= 2 && Boolean(candidate.timeRaw)) return true;
+  return false;
+};
+
+const iterateCandidateBlocks = async (
+  candidateBlocks: HtmlCandidateBlock[],
+  pageIndicatesMusicHistory: boolean,
+  strict: boolean,
+): Promise<{ listens: ParsedListen[]; skippedPreviews: string[] }> => {
   const listens: ParsedListen[] = [];
   const skippedPreviews: string[] = [];
   const seen = new Set<string>();
@@ -305,17 +354,20 @@ const parseHtmlHistoryWithDom = async (
     const candidate = candidateBlocks[index];
     const titleText = candidate.links[0];
     const artistText = candidate.links[1];
-    const qualifies =
-      candidate.isYouTubeMusicBlock || /-\s*topic\b/i.test(artistText ?? "") || pageIndicatesMusicHistory;
+    const qualifies = pageIndicatesMusicHistory || isMusicCandidate(candidate, strict);
 
     if (!titleText || !candidate.timeRaw || !qualifies) {
-      if (skippedPreviews.length < 3) skippedPreviews.push(previewText(candidate.text));
+      if (skippedPreviews.length < 5) {
+        skippedPreviews.push(previewText(candidate.text));
+      }
       continue;
     }
 
     const listen = buildListen(titleText, artistText, candidate.timeRaw);
     if (!listen) {
-      if (skippedPreviews.length < 3) skippedPreviews.push(previewText(candidate.text));
+      if (skippedPreviews.length < 5) {
+        skippedPreviews.push(previewText(candidate.text));
+      }
       continue;
     }
 
@@ -329,7 +381,28 @@ const parseHtmlHistoryWithDom = async (
     }
   }
 
-  return { candidateBlocks, listens, skippedPreviews };
+  return { listens, skippedPreviews };
+};
+
+const parseHtmlHistoryWithDom = async (
+  doc: Document,
+): Promise<{
+  candidateBlocks: HtmlCandidateBlock[];
+  listens: ParsedListen[];
+  skippedPreviews: string[];
+  usedBroadFallback: boolean;
+}> => {
+  const { pageIndicatesMusicHistory } = getPageContext(doc);
+  const candidateBlocks = getCandidateBlocks(doc);
+
+  const strictResult = await iterateCandidateBlocks(candidateBlocks, pageIndicatesMusicHistory, true);
+  if (strictResult.listens.length > 0) {
+    return { candidateBlocks, ...strictResult, usedBroadFallback: false };
+  }
+
+  // No results with strict music detection — retry with broader heuristics
+  const broadResult = await iterateCandidateBlocks(candidateBlocks, pageIndicatesMusicHistory, false);
+  return { candidateBlocks, ...broadResult, usedBroadFallback: true };
 };
 
 const parseHtmlHistoryWithFallback = async (
@@ -372,8 +445,13 @@ const parseHtmlHistoryWithFallback = async (
     const qualifies =
       lines.some((line) => /\byoutube music\b/i.test(line)) ||
       /-\s*topic\b/i.test(artistLine ?? "") ||
-      pageContext.pageIndicatesMusicHistory;
-    if (!qualifies) continue;
+      /#[A-Za-z][A-Za-z0-9_]+/.test(block) ||
+      pageContext.pageIndicatesMusicHistory ||
+      Boolean(artistLine); // broad: Watched + title + artist + timestamp is likely music
+    if (!qualifies) {
+      console.debug("[takeout-html-parser:text-fallback] skipped:", { reason: "not music", preview: previewText(block) });
+      continue;
+    }
 
     const listen = buildListen(lines[titleIndex], artistLine, findTimestampCandidate(timeRaw) ?? timeRaw);
     if (!listen) continue;
@@ -403,19 +481,27 @@ const parseHtmlHistory = async (text: string): Promise<ParsedListen[]> => {
   const pageContext = doc ? getPageContext(doc) : { fileLooksLikeTakeout: false, pageIndicatesMusicHistory: false };
 
   if (!doc) {
-    throw new Error(htmlMusicExtractionError);
+    throw new Error(htmlParseError);
   }
 
-  const { candidateBlocks, listens, skippedPreviews } = await parseHtmlHistoryWithDom(doc);
-  const fallbackListens = listens.length === 0 ? await parseHtmlHistoryWithFallback(text, pageContext) : [];
-  const parsedListens = listens.length === 0 ? fallbackListens : listens;
-  const youtubeMusicBlocks = candidateBlocks.filter((candidate) => candidate.isYouTubeMusicBlock).length;
+  const { candidateBlocks, listens: domListens, skippedPreviews, usedBroadFallback } =
+    await parseHtmlHistoryWithDom(doc);
+  const fallbackListens = domListens.length === 0 ? await parseHtmlHistoryWithFallback(text, pageContext) : [];
+  const parsedListens = domListens.length > 0 ? domListens : fallbackListens;
+
+  const youtubeMusicCards = candidateBlocks.filter((candidate) => candidate.isYouTubeMusicBlock).length;
+  const cardsWithTimestamps = candidateBlocks.filter((candidate) => candidate.timeRaw).length;
+  const likelyMusicCards = candidateBlocks.filter((candidate) => isMusicCandidate(candidate, false)).length;
 
   console.debug("[takeout-html-parser]", {
-    candidateBlocks: candidateBlocks.length,
-    youtubeMusicBlocks,
-    parsedListens: parsedListens.length,
-    skippedBlockPreviews: skippedPreviews.slice(0, 3),
+    totalCards: candidateBlocks.length,
+    cardsWithTimestamps,
+    youtubeMusicCards,
+    likelyMusicCards,
+    parsedPlays: parsedListens.length,
+    usedBroadFallback,
+    usedTextFallback: domListens.length === 0 && fallbackListens.length > 0,
+    skippedExamples: skippedPreviews.slice(0, 5),
   });
 
   if (parsedListens.length === 0) {
@@ -437,7 +523,7 @@ export const detectFormat = (fileName: string, text: string): SupportedFormat | 
 };
 
 export async function parseTakeoutFile(file: File): Promise<ParsedListen[]> {
-  const text = await file.text();
+  let text = await file.text();
   if (!text.trim()) {
     throw new Error("Uploaded file is empty.");
   }
@@ -447,5 +533,29 @@ export async function parseTakeoutFile(file: File): Promise<ParsedListen[]> {
     throw new Error("Unsupported file format. Please upload a JSON or HTML Takeout history file.");
   }
 
+  // For HTML files: if the UTF-8 read contains many replacement characters (U+FFFD),
+  // the file may be windows-1252 encoded. Try re-decoding and use whichever has fewer artifacts.
+  // normalizeMojibakeText is applied later to individual text nodes via normalizeText, not to raw HTML.
+  if (format === "html") {
+    const replacementCount = (text.match(/\ufffd/g) ?? []).length;
+    // 0.5% threshold: more than 1 in 200 characters being replacement chars strongly indicates
+    // a mis-decoded encoding (e.g., a windows-1252 file read as UTF-8).
+    const mojibakeThreshold = 0.005;
+    if (replacementCount / Math.max(text.length, 1) > mojibakeThreshold) {
+      try {
+        const buffer = await file.arrayBuffer();
+        const w1252Text = new TextDecoder("windows-1252", { fatal: false }).decode(buffer);
+        const w1252ReplacementCount = (w1252Text.match(/\ufffd/g) ?? []).length;
+        if (w1252ReplacementCount < replacementCount) {
+          text = w1252Text;
+          console.debug("[takeout-html-parser] re-decoded as windows-1252 to reduce mojibake");
+        }
+      } catch {
+        // Keep original UTF-8 text
+      }
+    }
+  }
+
   return format === "json" ? parseJsonHistory(text) : parseHtmlHistory(text);
 }
+
