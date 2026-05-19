@@ -416,7 +416,7 @@ const parseHtmlHistoryWithFallback = async (
     const segmentText = stripTagsWithBreaks(segment);
     if (!YOUTUBE_MUSIC_PATTERN.test(segmentText)) continue;
 
-    const anchorMatches = Array.from(segment.matchAll(/<a\b[^>]*>(.*?)<\/a>/gis));
+    const anchorMatches = Array.from(segment.matchAll(/<a\b[^>]*>([\s\S]*?)<\/a>/gi));
     const links = anchorMatches
       .map((match) => normalizeText(match[1].replace(/<[^>]+>/g, " ")))
       .filter(isMeaningfulHistoryLink);
