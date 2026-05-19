@@ -11,11 +11,11 @@ interface TakeoutJsonItem {
 }
 
 interface HtmlCandidateBlock {
-  element: Element;
   text: string;
   links: string[];
   timeRaw: string | null;
-  isYouTubeMusicBlock: boolean;
+  isYouTubeMusicCard: boolean;
+  isGeneralYouTubeCard: boolean;
 }
 
 const htmlParseError =
@@ -47,7 +47,8 @@ const ignoredLinkLabels = new Set([
   "why is this here?",
   "here",
 ]);
-const YOUTUBE_MUSIC_PATTERN = /\byoutube music\b/i;
+const YOUTUBE_MUSIC_PATTERN = /\bYouTube Music\b/;
+const YOUTUBE_PATTERN = /\bYouTube\b/i;
 const timezoneOffsets: Record<string, string> = {
   UTC: "+0000",
   GMT: "+0000",
@@ -122,6 +123,11 @@ const stripTagsWithBreaks = (value: string) =>
   );
 
 const previewText = (value: string) => normalizeText(value).slice(0, 160);
+
+const normalizeCardText = (value: string) => normalizeMultilineText(value);
+
+const cleanTitlePrefix = (value: string): string =>
+  normalizeMojibakeText(value).replace(/^(?:Watched(?:\u00c2)?\s+|Listened to\s+)/i, "").trim();
 
 // Normalizes common mojibake artifacts from mis-encoded Google Takeout exports.
 // Handles cases where "Watched" is followed by a stray Â (U+00C2) from latin-1/UTF-8 mismatch.
@@ -270,7 +276,8 @@ const buildListen = (titleText: string, artistText: string | undefined, timeRaw:
   const playedAtMs = parseDate(timeRaw);
   if (!playedAtMs) return null;
 
-  const { song, artist } = splitSongAndArtist(titleText, artistText);
+  const cleanedTitle = cleanTitlePrefix(titleText);
+  const { song, artist } = splitSongAndArtist(cleanedTitle, artistText);
   // Allow play if artist is known, even when the title is mojibake or missing
   const hasKnownArtist = artist !== "Unknown Artist";
   if (!song || (song === "Unknown Song" && !hasKnownArtist)) return null;
@@ -280,79 +287,81 @@ const buildListen = (titleText: string, artistText: string | undefined, timeRaw:
     artist,
     timestamp: new Date(playedAtMs).toISOString(),
     playedAtMs,
-    sourceTitle: titleText,
+    sourceTitle: cleanedTitle,
   };
 };
 
-const getCandidateBlocks = (doc: Document): { blocks: HtmlCandidateBlock[]; totalCards: number; skippedGeneralCards: number } => {
-  const allActivityCards = Array.from(doc.body?.querySelectorAll("div, section, article, li, tr") ?? [])
-    .map((element) => {
-      const text = normalizeText(element.textContent ?? "");
-      const links = Array.from(element.querySelectorAll("a"))
-        .map((link) => normalizeText(link.textContent ?? ""))
-        .filter(isMeaningfulHistoryLink);
-      const timeRaw = findTimestampCandidate(text);
-      const isYouTubeMusicBlock = YOUTUBE_MUSIC_PATTERN.test(text);
-
-      return {
-        element,
-        text,
-        links,
-        timeRaw,
-        isYouTubeMusicBlock,
-      };
-    })
-    .filter(
-      (candidate) =>
-        candidate.links.length >= 2 &&
-        Boolean(candidate.timeRaw) &&
-        candidate.text.length >= 20 &&
-        candidate.text.length <= 3000,
-    );
-
-  const totalCards = allActivityCards.length;
-  const musicCards = allActivityCards
-    .filter((candidate) => candidate.isYouTubeMusicBlock)
-    .sort((left, right) => left.text.length - right.text.length);
-  const skippedGeneralCards = totalCards - musicCards.length;
-
-  const blocks: HtmlCandidateBlock[] = [];
-  for (const candidate of musicCards) {
-    if (blocks.some((accepted) => candidate.element.contains(accepted.element))) continue;
-    blocks.push(candidate);
-  }
-
-  return { blocks, totalCards, skippedGeneralCards };
+const getCardElements = (doc: Document): Element[] => {
+  const selectors = [".outer-cell", ".content-cell", 'div[class*="content-cell"]', 'div[class*="outer-cell"]'];
+  const elements = selectors.flatMap((selector) => Array.from(doc.querySelectorAll(selector)));
+  const unique = Array.from(new Set(elements));
+  return unique.sort((left, right) => {
+    if (left === right) return 0;
+    const pos = left.compareDocumentPosition(right);
+    if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+    if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+    return 0;
+  });
 };
 
-// Returns true if a candidate block is a YouTube Music history entry.
-// Only entries whose activity card explicitly contains "YouTube Music" are included.
-const isMusicCandidate = (candidate: HtmlCandidateBlock): boolean =>
-  candidate.isYouTubeMusicBlock;
+const extractMeaningfulAnchorTexts = (element: Element): string[] =>
+  Array.from(element.querySelectorAll("a"))
+    .map((link) => normalizeText(link.textContent ?? ""))
+    .filter(isMeaningfulHistoryLink);
+
+const buildDomCardCandidates = (
+  doc: Document,
+): { cards: HtmlCandidateBlock[]; totalCards: number } => {
+  const elements = getCardElements(doc);
+  const cards = elements.map((element) => {
+    const text = normalizeCardText(element.textContent ?? "");
+    const links = extractMeaningfulAnchorTexts(element);
+    const timeRaw = findTimestampCandidate(text);
+    const isYouTubeMusicCard = YOUTUBE_MUSIC_PATTERN.test(text);
+    const isGeneralYouTubeCard = !isYouTubeMusicCard && YOUTUBE_PATTERN.test(text);
+
+    return {
+      text,
+      links,
+      timeRaw,
+      isYouTubeMusicCard,
+      isGeneralYouTubeCard,
+    };
+  });
+
+  return { cards, totalCards: cards.length };
+};
 
 const iterateCandidateBlocks = async (
   candidateBlocks: HtmlCandidateBlock[],
-): Promise<{ listens: ParsedListen[]; skippedPreviews: string[] }> => {
+): Promise<{ listens: ParsedListen[]; failedYouTubeMusicCardPreviews: string[]; skippedGeneralYouTubeCards: number }> => {
   const listens: ParsedListen[] = [];
-  const skippedPreviews: string[] = [];
+  const failedYouTubeMusicCardPreviews: string[] = [];
+  let skippedGeneralYouTubeCards = 0;
   const seen = new Set<string>();
 
   for (let index = 0; index < candidateBlocks.length; index += 1) {
     const candidate = candidateBlocks[index];
+    if (candidate.isGeneralYouTubeCard) {
+      skippedGeneralYouTubeCards += 1;
+      continue;
+    }
+    if (!candidate.isYouTubeMusicCard) continue;
+
     const titleText = candidate.links[0];
     const artistText = candidate.links[1];
 
-    if (!titleText || !candidate.timeRaw || !isMusicCandidate(candidate)) {
-      if (skippedPreviews.length < 5) {
-        skippedPreviews.push(previewText(candidate.text));
+    if (!titleText || !artistText || !candidate.timeRaw) {
+      if (failedYouTubeMusicCardPreviews.length < 3) {
+        failedYouTubeMusicCardPreviews.push(previewText(candidate.text));
       }
       continue;
     }
 
     const listen = buildListen(titleText, artistText, candidate.timeRaw);
     if (!listen) {
-      if (skippedPreviews.length < 5) {
-        skippedPreviews.push(previewText(candidate.text));
+      if (failedYouTubeMusicCardPreviews.length < 3) {
+        failedYouTubeMusicCardPreviews.push(previewText(candidate.text));
       }
       continue;
     }
@@ -367,67 +376,72 @@ const iterateCandidateBlocks = async (
     }
   }
 
-  return { listens, skippedPreviews };
+  return { listens, failedYouTubeMusicCardPreviews, skippedGeneralYouTubeCards };
 };
 
 const parseHtmlHistoryWithDom = async (
   doc: Document,
 ): Promise<{
-  blocks: HtmlCandidateBlock[];
+  cards: HtmlCandidateBlock[];
   totalCards: number;
-  skippedGeneralCards: number;
+  youtubeMusicCards: number;
   listens: ParsedListen[];
-  skippedPreviews: string[];
+  skippedGeneralYouTubeCards: number;
+  failedYouTubeMusicCardPreviews: string[];
 }> => {
-  const { blocks, totalCards, skippedGeneralCards } = getCandidateBlocks(doc);
-  const result = await iterateCandidateBlocks(blocks);
-  return { blocks, totalCards, skippedGeneralCards, ...result };
+  const { cards, totalCards } = buildDomCardCandidates(doc);
+  const youtubeMusicCards = cards.filter((card) => card.isYouTubeMusicCard).length;
+  const result = await iterateCandidateBlocks(cards);
+  return { cards, totalCards, youtubeMusicCards, ...result };
 };
 
 const parseHtmlHistoryWithFallback = async (
   text: string,
-): Promise<ParsedListen[]> => {
-  const blockText = stripTagsWithBreaks(text);
-  const blocks = blockText
-    .split(/\n{2,}/)
-    .map((value) => normalizeMultilineText(value))
-    .filter(Boolean);
+): Promise<{ listens: ParsedListen[]; failedYouTubeMusicCardPreviews: string[] }> => {
+  const failedYouTubeMusicCardPreviews: string[] = [];
+  const markerRegex = /YouTube Music/gi;
+  const markers = Array.from(text.matchAll(markerRegex)).map((match) => match.index ?? -1).filter((index) => index >= 0);
+  const segments = markers.map((start, index) => {
+    const next = markers[index + 1] ?? text.length;
+    const raw = text.slice(start, next);
+    const stopMatch = raw.match(/<(?:h1|h2|section|article|li|tr)\b|<div\b[^>]*class\s*=\s*["'][^"']*(?:outer-cell|content-cell)[^"']*["']/i);
+    if (!stopMatch || stopMatch.index === 0) return raw;
+    return raw.slice(0, stopMatch.index);
+  });
   const listens: ParsedListen[] = [];
   const seen = new Set<string>();
 
-  for (let index = 0; index < blocks.length; index += 1) {
-    const block = blocks[index];
-    const lines = block
-      .split("\n")
-      .map((line) => normalizeText(line))
-      .filter(Boolean);
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index];
+    const segmentText = stripTagsWithBreaks(segment);
+    if (!YOUTUBE_MUSIC_PATTERN.test(segmentText)) continue;
 
-    if (lines.length < 3) continue;
-
-    const timeRaw = lines.find((line) => Boolean(findTimestampCandidate(line)));
-    if (!timeRaw) continue;
-
-    const titleIndex = lines.findIndex((line) => /\b(?:watched|listened(?:\s+to)?)\b/i.test(line));
-    if (titleIndex === -1) continue;
-
-    const artistLine = lines
-      .slice(titleIndex + 1)
-      .find(
-        (line) =>
-          !findTimestampCandidate(line) &&
-          !YOUTUBE_MUSIC_PATTERN.test(line) &&
-          !/^products?:?/i.test(line) &&
-          !/^why is this here\??$/i.test(line),
-      );
-
-    const qualifies = lines.some((line) => YOUTUBE_MUSIC_PATTERN.test(line));
-    if (!qualifies) {
-      console.debug("[takeout-html-parser:text-fallback] skipped:", { reason: "not youtube music", preview: previewText(block) });
+    const anchorMatches = Array.from(segment.matchAll(/<a\b[^>]*>([\s\S]*?)<\/a>/gi));
+    const links = anchorMatches
+      .map((match) => normalizeText(match[1].replace(/<[^>]+>/g, " ")))
+      .filter(isMeaningfulHistoryLink);
+    if (links.length < 2) {
+      if (failedYouTubeMusicCardPreviews.length < 3) {
+        failedYouTubeMusicCardPreviews.push(previewText(segmentText));
+      }
       continue;
     }
 
-    const listen = buildListen(lines[titleIndex], artistLine, findTimestampCandidate(timeRaw) ?? timeRaw);
-    if (!listen) continue;
+    const timeRaw = findTimestampCandidate(segmentText);
+    if (!timeRaw) {
+      if (failedYouTubeMusicCardPreviews.length < 3) {
+        failedYouTubeMusicCardPreviews.push(previewText(segmentText));
+      }
+      continue;
+    }
+
+    const listen = buildListen(links[0], links[1], timeRaw);
+    if (!listen) {
+      if (failedYouTubeMusicCardPreviews.length < 3) {
+        failedYouTubeMusicCardPreviews.push(previewText(segmentText));
+      }
+      continue;
+    }
 
     const key = `${listen.song}::${listen.artist}::${listen.playedAtMs}`;
     if (seen.has(key)) continue;
@@ -439,10 +453,10 @@ const parseHtmlHistoryWithFallback = async (
     }
   }
 
-  return listens;
+  return { listens, failedYouTubeMusicCardPreviews };
 };
 
-const parseHtmlHistory = async (text: string): Promise<ParsedListen[]> => {
+export const parseHtmlHistoryForTest = async (text: string): Promise<ParsedListen[]> => {
   let doc: Document | null = null;
 
   try {
@@ -455,18 +469,28 @@ const parseHtmlHistory = async (text: string): Promise<ParsedListen[]> => {
     throw new Error(htmlParseError);
   }
 
-  const { blocks, totalCards, skippedGeneralCards, listens: domListens, skippedPreviews } =
+  const {
+    totalCards,
+    youtubeMusicCards,
+    listens: domListens,
+    skippedGeneralYouTubeCards: domSkippedGeneralYouTubeCards,
+    failedYouTubeMusicCardPreviews: domFailedYouTubeMusicCardPreviews,
+  } =
     await parseHtmlHistoryWithDom(doc);
-  const fallbackListens = domListens.length === 0 ? await parseHtmlHistoryWithFallback(text) : [];
+  const {
+    listens: fallbackListens,
+    failedYouTubeMusicCardPreviews: fallbackFailedYouTubeMusicCardPreviews,
+  } = domListens.length === 0 ? await parseHtmlHistoryWithFallback(text) : { listens: [], failedYouTubeMusicCardPreviews: [] };
   const parsedListens = domListens.length > 0 ? domListens : fallbackListens;
 
   console.debug("[takeout-html-parser]", {
-    totalCards,
-    youtubeMusicCards: blocks.length,
-    parsedYouTubeMusicPlays: parsedListens.length,
-    skippedGeneralYouTubeCards: skippedGeneralCards,
+    totalActivityCardsFound: totalCards,
+    youtubeMusicCardsFound: youtubeMusicCards,
+    parsedPlays: parsedListens.length,
+    skippedGeneralYouTubeCards: domSkippedGeneralYouTubeCards,
     usedTextFallback: domListens.length === 0 && fallbackListens.length > 0,
-    skippedExamples: skippedPreviews.slice(0, 5),
+    firstFailedYouTubeMusicCardPreviews:
+      [...domFailedYouTubeMusicCardPreviews, ...fallbackFailedYouTubeMusicCardPreviews].slice(0, 3),
   });
 
   if (parsedListens.length === 0) {
@@ -521,6 +545,5 @@ export async function parseTakeoutFile(file: File): Promise<ParsedListen[]> {
     }
   }
 
-  return format === "json" ? parseJsonHistory(text) : parseHtmlHistory(text);
+  return format === "json" ? parseJsonHistory(text) : parseHtmlHistoryForTest(text);
 }
-
